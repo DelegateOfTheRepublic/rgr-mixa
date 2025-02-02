@@ -5,8 +5,9 @@ import {verifyProductField, verifyProductFields} from "../middleware/productFiel
 
 export const productRouter = new Router()
 
-productRouter.get('/', ProductController.getProducts)
-productRouter.get('/:id', ProductController.getProduct)
-productRouter.post('/', verifyProductFields, ProductController.create)
-productRouter.put('/:id', verifyProductField, ProductController.update)
+productRouter.get('/', ProductController.list)
+productRouter.get('/:id', ProductController.one)
+productRouter.post('/', ProductController.create)
+productRouter.put('/:id', ProductController.update)
+productRouter.put('/:id/rating', ProductController.updateRating)
 productRouter.delete('/:id', ProductController.delete)

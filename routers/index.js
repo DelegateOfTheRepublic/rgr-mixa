@@ -5,12 +5,20 @@ import { cartRouter } from './cart.js'
 import { orderRouter } from './order.js'
 import { authRouter } from "./auth.js";
 import { verifyToken } from "../middleware/token.js";
+import {subcategoryRouter} from "./subcategory.js";
+import {userRouter} from "./user.js";
+import {paymentRouter} from "./payment.js";
+import {discountRouter} from "./discount.js";
 
 
 export const router = new Router()
 
-router.use('/categories', verifyToken, categoryRouter)
-router.use('/products', verifyToken, productRouter)
-router.use('/cart', verifyToken, cartRouter)
-router.use('/order', verifyToken, orderRouter)
+router.use('/categories', categoryRouter)
+router.use('/subcategories', subcategoryRouter)
+router.use('/products', productRouter)
+router.use('/cart', cartRouter)
+router.use('/order', orderRouter)
 router.use('/auth', authRouter)
+router.use('/user', userRouter)
+router.use('/payment', paymentRouter)
+router.use('/discounts', discountRouter)

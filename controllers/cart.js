@@ -1,85 +1,57 @@
-import {Cart, Cart_Product, Product, User} from "../db/models.js"
-import _ from "lodash";
+import {Cart_Product, Product} from "../db/models.js"
 
-export async function updateTotalCost(product) {
-    const cartProducts = await Cart_Product.findAll({ where: { productId: product.id } })
-    for (let cartProduct of cartProducts) {
-        let oldCartProductCost = cartProduct.cost
-        cartProduct.cost = cartProduct.productAmount * product.price
-        await cartProduct.save()
-
-        const cart = await Cart.findByPk(cartProduct.cartId)
-        cart.totalCost = cart.totalCost - oldCartProductCost + cartProduct.cost
-        await cart.save()
-    }
-}
 
 class CartController {
-    async getCart(req, res) {
-        let cart;
-        const user = await User.findOne({
+    async addProduct(req, res) {
+        const { productId, amount } = req.body
+        let cart = await req.user.getCart()
+        const product = await Product.findByPk(productId)
+
+        await cart.addProduct(product, { trough: { productAmount: amount, cost: product.price * amount } })
+        cart = await req.user.getCart()
+
+        return res.status(200).json({ 'cart': cart })
+    }
+
+    async removeProduct(req, res) {
+        let cart = await req.user.getCart()
+        const product = await Product.findByPk(req.params.productId)
+
+        cart.totalCost -= await cart.getProductCost(product.id)
+        await cart.save()
+        await cart.removeProduct(product)
+        cart = await req.user.getCart()
+
+        return res.status(200).json({ 'cart': cart })
+    }
+
+    async updateProductAmount(req, res) {
+        const { amount } = req.body
+        const cart = await req.user.getCart()
+        const product = await Product.findByPk(req.params.productId)
+        let cartProduct = await Cart_Product.findOne({
             where: {
-                email: req.user.email,
+                cartId: cart.id,
+                productId: product.id,
             }
         })
 
-        if (_.isNull(user.cartId)) {
-            cart = await Cart.create()
-            user.cartId = cart.id
-            await user.save()
+        if (cartProduct.productAmount + amount === 0) {
+            cart.totalCost -= cartProduct.cost
+            await cart.save()
+            await cartProduct.destroy()
+
+            return res.status(200).json({ 'cartProduct': null })
         }
 
-        cart = await Cart.findOne({ where: { id: user.cartId }, include: Product })
-
-        if (cart) {
-            return res.status(200).json({ 'cart': cart })
-        }
-
-        return res.status(404).json({ 'cart': null })
-    }
-
-    async update(req, res) {
-        const { productId, amount } = req.body
-        const cartId = await (await User.findOne({ where: { email: req.user.email } })).dataValues.cartId
-        let cart = await Cart.findByPk(cartId)
-        const product = await Product.findByPk(productId)
-        const cartProduct = await Cart_Product.findOne({ where: { cartId, productId } })
-
-        if (_.isNull(cartProduct)) {
-            await cart.addProduct(product, { through: { productAmount: amount, cost: product.price * amount } })
-            cart.totalCost = cart.totalCost + product.price * amount
-        } else {
-            cartProduct.productAmount = cartProduct.productAmount + _.toNumber(amount)
-            const oldCartProductCost = cartProduct.cost
-            cartProduct.cost = cartProduct.productAmount * product.price
-            await cartProduct.save()
-
-            cart.totalCost = cart.totalCost - oldCartProductCost + cartProduct.cost
-
-            if (cartProduct.productAmount === 0) {
-                await cart.removeProduct(productId)
-            }
-        }
-        await cart.save()
-        cart = await Cart.findOne({ where: { id: cartId }, include: Product })
-
-        return res.status(200).json({ 'cart': cart })
-    }
-
-    async delete(req, res) {
-        const { productId } = req.query
-        const product = await Product.findByPk(productId)
-        const cartId = await (await User.findOne({ where: { email: req.user.email } })).dataValues.cartId
-        let cart = await Cart.findByPk(cartId)
-
-        const cartProduct = await Cart_Product.findByPk(productId)
         cart.totalCost -= cartProduct.cost
-        await cart.removeProduct(productId)
+        cartProduct.productAmount += amount
+        cartProduct.cost = product.price * cartProduct.productAmount
+        cart.totalCost += cartProduct.cost
+        cartProduct = await cartProduct.save()
         await cart.save()
 
-        cart = await Cart.findOne({ where: { id: cartId }, include: Product })
-
-        return res.status(200).json({ 'cart': cart })
+        return res.status(200).json({ cartProduct })
     }
 }
 

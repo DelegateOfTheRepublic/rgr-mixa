@@ -3,5 +3,5 @@ export const config = {
     'port': '3306',
     'username': 'root',
     'password': '',
-    'database': 'shop'
+    'database': 'eshop'
 }

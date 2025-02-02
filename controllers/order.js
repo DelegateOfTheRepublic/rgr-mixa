@@ -1,19 +1,6 @@
 import {Cart, Cart_Product, Order, Order_Product, Product, User} from "../db/models.js";
 
 class OrderController {
-    async updateTotalCost(product) {
-        const orderProducts = await Order_Product.findAll({ where: { productId: product.id } })
-        for (let orderProduct of orderProducts) {
-            let oldOrderProductCost = orderProduct.cost
-            orderProduct.cost = orderProduct.productAmount * product.price
-            await orderProduct.save()
-
-            const order = await Order.findByPk(orderProduct.cartId)
-            order.totalCost = order.totalCost - oldOrderProductCost + orderProduct.cost
-            await order.save()
-        }
-    }
-
     async getOrder(req, res) {
         const { id } = req.params
         let order = await Order.findOne({ where: { id }, include: Product })

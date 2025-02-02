@@ -1,26 +1,91 @@
-import { STRING, INTEGER, FLOAT, BOOLEAN, ENUM } from 'sequelize'
+import {STRING, INTEGER, FLOAT, BOOLEAN, ENUM, DATE, Model, JSON} from 'sequelize'
 import { seq } from './db.js'
+import {ORDER_STATUSES, PAYMENT_METHODS, ROLE_TYPES} from "../consts.js"
+import _ from "lodash";
+import cart from "../controllers/cart.js";
 
 
-const Product = seq.define('product', {
+class Product extends Model {
+    async getCategory() {
+        return await Category.findByPk(this.categoryId)
+    }
+
+    async getSubcategory() {
+        return await Subcategory.findByPk(this.subcategoryId)
+    }
+
+    async getImagePath() {
+        const categoryName = (await this.getCategory()).name
+        const subcategoryName = (await this.getSubcategory()).name
+
+        return `uploads/${categoryName}/${subcategoryName}`
+    }
+
+    async getRating() {
+        const stars = (await Rating.findOne({
+            where: {
+                productId: this.id,
+            }
+        })).stars
+
+        const rating = _.sum(stars.map((star, index) => star * (index + 1))) / _.sum(stars)
+
+        return rating
+    }
+}
+
+Product.init(
+    {
+        manufacturer: {
+            type: STRING,
+            allowNull: false,
+        },
+        model: {
+            type: STRING,
+            allowNull: false,
+        },
+        weight: {
+            type: FLOAT,
+            allowNull: false,
+        },
+        price: {
+            type: FLOAT,
+            allowNull: false,
+        },
+        ratingNumber: {
+            type: INTEGER,
+            defaultValue: 0
+        },
+        stockQuantity: {
+            type: INTEGER,
+            allowNull: false,
+        },
+        deliveryDays: {
+            type: INTEGER,
+            allowNull: false,
+        },
+        image: {
+            type: STRING,
+            allowNull: false,
+        }
+    },
+    {
+        sequelize: seq,
+        timestamps: false,
+    }
+)
+
+const Rating = seq.define('rating', {
     id: {
         type: INTEGER,
         autoIncrement: true,
         primaryKey: true,
         allowNull: false,
         unique: true,
-      },
-    type: {
-        type: STRING,
-        allowNull: false,
     },
-    price: {
-        type: FLOAT,
-        allowNull: false,
-      },
-    image: {
-        type: STRING,
-        allowNull: false,
+    stars: {
+        type: JSON,
+        defaultValue: [0, 0, 0, 0, 0]
     }
 })
 
@@ -38,6 +103,75 @@ const Category = seq.define('category', {
     }
 })
 
+const Subcategory = seq.define('subcategory', {
+    id: {
+        type: INTEGER,
+        autoIncrement: true,
+        primaryKey: true,
+        allowNull: false,
+        unique: true,
+    },
+    name: {
+        type: STRING,
+        allowNull: false,
+    }
+})
+
+const Discount = seq.define('discount', {
+    id: {
+        type: INTEGER,
+        autoIncrement: true,
+        primaryKey: true,
+        allowNull: false,
+        unique: true,
+    },
+    value: {
+        type: FLOAT,
+        allowNull: false,
+    }
+})
+
+const OrderHistory = seq.define('order_history', {
+    id: {
+        type: INTEGER,
+        autoIncrement: true,
+        primaryKey: true,
+        allowNull: false,
+        unique: true,
+    },
+    status: {
+        type: STRING
+    },
+    payment: {
+        type: STRING,
+    },
+    totalCost: {
+        type: FLOAT,
+    },
+    formationDate: {
+        type: DATE,
+    },
+    arrivalDate: {
+        type: DATE,
+    }
+})
+
+const OrderHistory_Product = seq.define('order_history_product', {
+    id: {
+        type: INTEGER,
+        autoIncrement: true,
+        primaryKey: true,
+        allowNull: false,
+        unique: true,
+    },
+    productAmount: {
+        type: INTEGER,
+    },
+    price: {
+        type: FLOAT,
+    }
+})
+
 const ShippingAddress = seq.define('shipping_address', {
     id: {
         type: INTEGER,
@@ -52,63 +186,129 @@ const ShippingAddress = seq.define('shipping_address', {
     }
 })
 
-const Order = seq.define('order', {
-    id: {
-        type: INTEGER,
-        autoIncrement: true,
-        primaryKey: true,
-        allowNull: false,
-        unique: true,
-    },
-    status: {
-        type: ENUM,
-        values: ['собирается', 'доставляется', 'готов к получению'],
-        defaultValue: 'собирается'
-    },
-    payment: {
-        type: ENUM,
-        values: ['кредитной картой онлайн', 'наличный рассчет', 'при получении'],
-        defaultValue: 'кредитной картой онлайн'
-    },
-    totalCost: {
-        type: FLOAT,
-    }
-})
+class Order extends Model {}
 
-const Cart = seq.define('cart', {
-    id: {
-        type: INTEGER,
-        autoIncrement: true,
-        primaryKey: true,
-        allowNull: false,
-        unique: true,
+Order.init(
+    {
+        status: {
+            type: ENUM,
+            values: Object.values(ORDER_STATUSES),
+            defaultValue: ORDER_STATUSES.AWAITING_PAYMENT
+        },
+        payment: {
+            type: ENUM,
+            values: Object.values(PAYMENT_METHODS),
+            defaultValue: PAYMENT_METHODS.BY_CREDIT_CARD_ONLINE
+        },
+        totalCost: {
+            type: FLOAT,
+        },
+        arrivalDate: {
+            type: DATE,
+        },
+        reservationTime: {
+            type: INTEGER,
+            defaultValue: 30
+        }
     },
-    totalCost: {
-        type: FLOAT
+    {
+        sequelize: seq
     }
-})
+)
 
-const User = seq.define('user', {
-      id: {
-        type: INTEGER,
-        autoIncrement: true,
-        primaryKey: true,
-        allowNull: false,
-        unique: true,
-      },
-      email: {
-        type: STRING,
-        allowNull: false,
-      },
-      password: {
-        type: STRING,
-        allowNull: false,
-      },
-      isActivated: {
-        type: BOOLEAN,
-        defaultValue: false,
-      }
-})
+class Cart extends Model {
+    static async updateTotalCosts(product) {
+        const cartProducts = await Cart_Product.findAll({
+            where: {
+                productId: product.id
+            }
+        })
+
+        for (let cartProduct of cartProducts) {
+            let oldCost = cartProduct.cost
+            await cartProduct.update({
+                cost: cartProduct.productAmount * product.price,
+            })
+            const cart = await Cart.findByPk(cartProduct.cartId)
+            await cart.update({
+                totalCost: cart.totalCost - oldCost + cartProduct.cost,
+            })
+        }
+    }
+
+    async getProductCost(productId) {
+        const cartProduct = await Cart_Product.findOne({
+            where: {
+                cartId: this.id,
+                productId,
+            }
+        })
+
+        return cartProduct.cost
+    }
+}
+
+Cart.init(
+    {
+        totalCost: {
+            type: FLOAT
+        }
+    },
+    {
+        sequelize: seq,
+    }
+)
+
+class User extends Model {
+    async getCart() {
+        return await Cart.findByPk(this.cartId, { include: Product })
+    }
+
+    async getOrders() {
+        const activeOrders = await Order.findAll({
+            where: {
+                userId: this.id,
+            },
+            include: Product
+        })
+        const receivedOrders = await OrderHistory.findAll({
+            where: {
+                userId: this.id,
+            },
+            include: Product
+        })
+
+        return {
+            active: activeOrders,
+            received: receivedOrders
+        }
+    }
+}
+
+User.init(
+    {
+        email: {
+            type: STRING,
+            allowNull: false,
+        },
+        password: {
+            type: STRING,
+            allowNull: false,
+        },
+        isActivated: {
+            type: BOOLEAN,
+            defaultValue: false,
+        },
+        role: {
+            type: ENUM,
+            values: Object.values(ROLE_TYPES),
+            defaultValue: ROLE_TYPES.CUSTOMER,
+        }
+    },
+    {
+        sequelize: seq
+    }
+)
 
 const Token = seq.define('token', {
       id: {
@@ -124,16 +324,27 @@ const Token = seq.define('token', {
       }
 })
 
-const Order_Product = seq.define('Order_Product', {
-    productAmount: {
-        type: INTEGER,
-        defaultValue: 1,
-    },
-    cost: {
-        type: FLOAT,
-        allowNull: false,
+class Order_Product extends Model {
+    getCost() {
+        return this.amount * this.price
     }
-})
+}
+
+Order_Product.init(
+    {
+        amount: {
+            type: INTEGER,
+            defaultValue: 1,
+        },
+        price: {
+            type: FLOAT,
+        }
+    },
+    {
+        sequelize: seq,
+        timestamps: false,
+    }
+)
 
 const Cart_Product = seq.define('Cart_Product', {
     productAmount: {
@@ -148,13 +359,28 @@ const Cart_Product = seq.define('Cart_Product', {
 
 Category.hasMany(Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE'})
 User.hasOne(Token, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+User.hasMany(Order, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+User.hasMany(OrderHistory, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 Product.belongsToMany(Cart, { through: Cart_Product })
 Cart.belongsToMany(Product, { through: Cart_Product })
 Cart.hasOne(User, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-Order.hasMany(ShippingAddress, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 ShippingAddress.hasMany(Order, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 User.hasMany(Order, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 Product.belongsToMany(Order, { through: Order_Product })
 Order.belongsToMany(Product, { through: Order_Product })
+Product.belongsToMany(OrderHistory, { through: OrderHistory_Product })
+OrderHistory.belongsToMany(Product, { through: OrderHistory_Product })
+Product.belongsToMany(User, { through: 'Wishlist' })
+User.belongsToMany(Product, { through: 'Wishlist' })
+Product.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+Category.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+Subcategory.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+Subcategory.hasMany(Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+Category.hasMany(Subcategory, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+Product.hasOne(Rating, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 
-export { Cart, Category, Cart_Product, Order, Order_Product, Product, ShippingAddress, Token, User }
+
+export {
+    Cart, Category, Cart_Product, Discount, Order, Order_Product, OrderHistory, OrderHistory_Product, Product,
+    Rating, ShippingAddress, Subcategory, Token, User
+}
