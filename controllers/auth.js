@@ -1,42 +1,25 @@
 import jwt from 'jsonwebtoken'
-import nodemailer from 'nodemailer'
 import { hashSync, compareSync, genSaltSync } from "bcrypt"
 
-import { data } from '../nodemail.js'
+import {config} from "../config.js";
 import { User, Token } from '../db/models.js';
+import {sendEmail} from "../emailNotification.js";
 
 class AuthController {
     static generateActivationToken(email) {
-        return jwt.sign({ email }, data.SECRET_KEY, { expiresIn: '24h' });
+        return jwt.sign({ email }, config.SECRET_KEY, { expiresIn: '24h' });
     };
 
     static sendActivationEmail(email) {
         const token = AuthController.generateActivationToken(email);
         const activationLink = `http://localhost:8000/api/auth/activate/${token}`;
-
-        const transporter = nodemailer.createTransport({
-            host: 'smtp.mail.ru',
-            port: 465,
-            auth: {
-                user: data.EMAIL,
-                pass: data.PASSWORD,
-            },
-        });
-
-        const mailOptions = {
-            from: data.EMAIL,
-            to: email,
+        const emailData = {
             subject: 'Активация аккаунта',
             html: `<p>Для достпука к системе завершите регистрацию, перейдя по <a href="${activationLink}">ссылке</a></p>`,
-        };
+            email,
+        }
 
-        transporter.sendMail(mailOptions, (error, info) => {
-            if (error) {
-                console.log('Ошибка отправки письма:', error);
-            } else {
-                console.log('Письмо отправлено:', info.response);
-            }
-        });
+        sendEmail(...emailData)
     };
 
     async register(req, res) {
@@ -60,7 +43,7 @@ class AuthController {
     async activate(req, res) {
         const { token } = req.params;
         try {
-            const decoded = jwt.verify(token, data.SECRET_KEY);
+            const decoded = jwt.verify(token, config.SECRET_KEY);
             const user = await User.findOne({ where: { email: decoded.email } });
 
             if (!user) {
@@ -85,7 +68,7 @@ class AuthController {
             return res.status(400).json({ message: 'Неверный логин или пароль!' });
         }
 
-        const token = jwt.sign({ email }, data.SECRET_KEY, { expiresIn: '24h' })
+        const token = jwt.sign({ email }, config.SECRET_KEY, { expiresIn: '24h' })
 
         await Token.create({
             userId: user.id,

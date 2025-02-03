@@ -7,7 +7,7 @@ class CartController {
         let cart = await req.user.getCart()
         const product = await Product.findByPk(productId)
 
-        await cart.addProduct(product, { trough: { productAmount: amount, cost: product.price * amount } })
+        await cart.addProduct(product, { trough: { amount, cost: product.price * amount } })
         cart = await req.user.getCart()
 
         return res.status(200).json({ 'cart': cart })
@@ -36,7 +36,7 @@ class CartController {
             }
         })
 
-        if (cartProduct.productAmount + amount === 0) {
+        if (cartProduct.amount + amount === 0) {
             cart.totalCost -= cartProduct.cost
             await cart.save()
             await cartProduct.destroy()
@@ -45,8 +45,8 @@ class CartController {
         }
 
         cart.totalCost -= cartProduct.cost
-        cartProduct.productAmount += amount
-        cartProduct.cost = product.price * cartProduct.productAmount
+        cartProduct.amount += amount
+        cartProduct.cost = product.price * cartProduct.amount
         cart.totalCost += cartProduct.cost
         cartProduct = await cartProduct.save()
         await cart.save()

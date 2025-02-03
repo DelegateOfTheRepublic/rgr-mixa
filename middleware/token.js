@@ -1,5 +1,5 @@
 import jwt from 'jwt-simple';
-import {data} from '../nodemail.js'
+import {config} from "../config.js";
 import {User} from "../db/models.js";
 
 export const verifyToken = async (req, res, next) => {
@@ -10,7 +10,7 @@ export const verifyToken = async (req, res, next) => {
     }
 
     try {
-        const decoded = jwt.decode(token, data.SECRET_KEY);
+        const decoded = jwt.decode(token, config.SECRET_KEY);
         req.user = await User.findOne({
             where: {
                 email: decoded.email

@@ -1,8 +1,9 @@
-import {STRING, INTEGER, FLOAT, BOOLEAN, ENUM, DATE, Model, JSON} from 'sequelize'
+import {STRING, INTEGER, FLOAT, BOOLEAN, ENUM, DATE, Model, JSON, Op} from 'sequelize'
 import { seq } from './db.js'
 import {ORDER_STATUSES, PAYMENT_METHODS, ROLE_TYPES} from "../consts.js"
 import _ from "lodash";
 import cart from "../controllers/cart.js";
+import discount from "../controllers/discount.js";
 
 
 class Product extends Model {
@@ -32,6 +33,21 @@ class Product extends Model {
 
         return rating
     }
+
+    async getDiscount() {
+        const categoryId = (await this.getCategory()).id
+        const subcategoryId = (await this.getSubcategory()).id
+
+        const dicsount = await Discount.findOne({
+            where: {
+                productId: this.id,
+                [Op.or]: { categoryId },
+                [Op.or]: { subcategoryId }
+            }
+        })
+
+        return !_.isNull(dicsount)? dicsount.value : 0
+    }
 }
 
 Product.init(
@@ -57,10 +73,6 @@ Product.init(
             defaultValue: 0
         },
         stockQuantity: {
-            type: INTEGER,
-            allowNull: false,
-        },
-        deliveryDays: {
             type: INTEGER,
             allowNull: false,
         },
@@ -139,6 +151,9 @@ const OrderHistory = seq.define('order_history', {
         allowNull: false,
         unique: true,
     },
+    number: {
+        type: STRING
+    },
     status: {
         type: STRING
     },
@@ -148,12 +163,18 @@ const OrderHistory = seq.define('order_history', {
     totalCost: {
         type: FLOAT,
     },
+    discountedTotalCost: {
+        type: FLOAT
+    },
     formationDate: {
         type: DATE,
     },
     arrivalDate: {
         type: DATE,
-    }
+    },
+    receiveDate: {
+        type: DATE
+    },
 })
 
 const OrderHistory_Product = seq.define('order_history_product', {
@@ -164,11 +185,14 @@ const OrderHistory_Product = seq.define('order_history_product', {
         allowNull: false,
         unique: true,
     },
-    productAmount: {
+    amount: {
         type: INTEGER,
     },
     price: {
         type: FLOAT,
+    },
+    discount: {
+        type: FLOAT
     }
 })
 
@@ -186,10 +210,99 @@ const ShippingAddress = seq.define('shipping_address', {
     }
 })
 
-class Order extends Model {}
+class Order extends Model {
+    async getDiscountedTotalCost() {
+        const orderedProducts = await Order_Product.findAll({
+            where: {
+                orderId: this.id,
+            }
+        })
+
+        const discountedTotalCost = await orderedProducts.reduce(
+            async (total, orderedProduct) => {
+                const discountValue = await (await Product.findByPk(orderedProduct.id)).getDiscount()
+                total += (1 - discountValue) * orderedProduct.getCost()
+
+                return total
+            },
+            0
+        )
+
+        return discountedTotalCost
+    }
+
+    async moveToHistory() {
+        const orderHistory = await OrderHistory.create({
+            userId: this.userId,
+            number: this.number,
+            status: ORDER_STATUSES.CANCELED,
+            payment: this.payment,
+            totalCost: this.totalCost,
+            discountedTotalCost: await this.getDiscountedTotalCost(),
+            formationDate: this.createdAt,
+            arrivalDate: this.arrivalDate,
+            receiveDate: this.receiveDate,
+            shippingAddressId: this.shippingAddressId,
+        })
+
+        const orderProductRaws = (await this.getProducts()).map(
+            async function(product) {
+                const orderProduct = await Order_Product.findOne({
+                    where: {
+                        orderId: this.id,
+                        productId: product.id,
+                    }
+                })
+
+                return {
+                    product: product,
+                    orderProduct: orderProduct,
+                }
+            }
+        )
+        for (let orderProductRaw of orderProductRaws) {
+            await orderHistory.addProduct(orderProductRaw.product, {
+                through: {
+                    amount: orderProductRaw.orderProduct.amount,
+                    price: orderProductRaw.orderProduct.price,
+                    discount: await orderProductRaw.product.getDiscount()
+                }
+            })
+            if (this.status === ORDER_STATUSES.CANCELED) {
+                await Product.increment(
+                {
+                        stockQuantity: orderProductRaw.orderProduct.amount
+                    },
+                    {
+                        where: {
+                            id: orderProductRaw.product.id
+                        }
+                    })
+            }
+        }
+
+        await Order.destroy({
+            where: {
+                id: this.id,
+            }
+        })
+
+        return orderHistory
+    }
+}
 
 Order.init(
     {
+        number: {
+            type: STRING,
+            set(value) {
+                if (_.isNull(this.getDataValue('number'))) {
+                    this.setDataValue('number', value);
+                } else {
+                    throw new Error("Field 'number' is readonly")
+                }
+            }
+        },
         status: {
             type: ENUM,
             values: Object.values(ORDER_STATUSES),
@@ -202,14 +315,14 @@ Order.init(
         },
         totalCost: {
             type: FLOAT,
+            defaultValue: 0
         },
         arrivalDate: {
             type: DATE,
         },
-        reservationTime: {
-            type: INTEGER,
-            defaultValue: 30
-        }
+        receiveDate: {
+            type: DATE
+        },
     },
     {
         sequelize: seq
@@ -227,7 +340,7 @@ class Cart extends Model {
         for (let cartProduct of cartProducts) {
             let oldCost = cartProduct.cost
             await cartProduct.update({
-                cost: cartProduct.productAmount * product.price,
+                cost: cartProduct.amount * product.price,
             })
             const cart = await Cart.findByPk(cartProduct.cartId)
             await cart.update({
@@ -347,7 +460,7 @@ Order_Product.init(
 )
 
 const Cart_Product = seq.define('Cart_Product', {
-    productAmount: {
+    amount: {
         type: INTEGER,
         defaultValue: 1
     },
@@ -365,7 +478,7 @@ Product.belongsToMany(Cart, { through: Cart_Product })
 Cart.belongsToMany(Product, { through: Cart_Product })
 Cart.hasOne(User, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 ShippingAddress.hasMany(Order, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-User.hasMany(Order, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+ShippingAddress.hasMany(OrderHistory, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 Product.belongsToMany(Order, { through: Order_Product })
 Order.belongsToMany(Product, { through: Order_Product })
 Product.belongsToMany(OrderHistory, { through: OrderHistory_Product })

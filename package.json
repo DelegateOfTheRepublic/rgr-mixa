@@ -24,6 +24,7 @@
     "node-fetch": "^3.3.2",
     "nodemailer": "^6.10.0",
     "random-email": "^1.0.3",
-    "sequelize": "^6.37.5"
+    "sequelize": "^6.37.5",
+    "short-unique-id": "^5.2.0"
   }
 }
