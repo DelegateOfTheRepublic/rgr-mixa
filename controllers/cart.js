@@ -1,4 +1,5 @@
 import {Cart_Product, Product} from "../db/models.js"
+import _ from "lodash";
 
 
 class CartController {
@@ -7,7 +8,9 @@ class CartController {
         let cart = await req.user.getCart()
         const product = await Product.findByPk(productId)
 
-        await cart.addProduct(product, { trough: { amount, cost: product.price * amount } })
+        await cart.addProduct(product, { through: { amount: amount, cost: product.price * amount } })
+        cart.totalCost += product.price * amount
+        await cart.save()
         cart = await req.user.getCart()
 
         return res.status(200).json({ 'cart': cart })
@@ -26,7 +29,7 @@ class CartController {
     }
 
     async updateProductAmount(req, res) {
-        const { amount } = req.body
+        const amount = _.toNumber(req.body.amount)
         const cart = await req.user.getCart()
         const product = await Product.findByPk(req.params.productId)
         let cartProduct = await Cart_Product.findOne({

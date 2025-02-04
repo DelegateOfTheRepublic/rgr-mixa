@@ -1,4 +1,4 @@
-import {Cart, Cart_Product, Product, User} from "../db/models.js";
+import {Cart, Product} from "../db/models.js";
 import _ from "lodash";
 
 class UserController {
@@ -43,7 +43,8 @@ class UserController {
     }
 
     async removeFromWishlist(req, res) {
-        await req.user.removeProduct(req.params.productId)
+        const product = await Product.findByPk(req.params.productId)
+        await req.user.removeProduct(product)
 
         return res.status(200).json({ 'wishlist': await req.user.getProducts() })
     }

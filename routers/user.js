@@ -4,7 +4,7 @@ import UserController from "../controllers/user.js";
 
 export const userRouter = Router();
 
-userRouter.get('/', UserController.profile)
+userRouter.get('/profile', UserController.profile)
 userRouter.get('/cart', UserController.cart)
 userRouter.get('/orders', UserController.orders)
 userRouter.get('/wishlist', UserController.wishlist)

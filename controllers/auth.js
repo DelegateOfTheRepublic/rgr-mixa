@@ -4,6 +4,8 @@ import { hashSync, compareSync, genSaltSync } from "bcrypt"
 import {config} from "../config.js";
 import { User, Token } from '../db/models.js';
 import {sendEmail} from "../emailNotification.js";
+import _ from "lodash";
+import {ROLE_TYPES} from "../consts.js";
 
 class AuthController {
     static generateActivationToken(email) {
@@ -12,18 +14,19 @@ class AuthController {
 
     static sendActivationEmail(email) {
         const token = AuthController.generateActivationToken(email);
-        const activationLink = `http://localhost:8000/api/auth/activate/${token}`;
+        const activationLink = `http://127.0.0.1:8000/api/auth/activate/${token}`;
         const emailData = {
             subject: 'Активация аккаунта',
             html: `<p>Для достпука к системе завершите регистрацию, перейдя по <a href="${activationLink}">ссылке</a></p>`,
             email,
         }
 
-        sendEmail(...emailData)
+        sendEmail(emailData.subject, emailData.html, emailData.email)
     };
 
     async register(req, res) {
         const { email, pwd } = req.body;
+        const isAdmin = _.get(req.body, 'isAdmin', false)
 
         const user = await User.findOne({ where: { email: email } });
         if (user) {
@@ -32,7 +35,8 @@ class AuthController {
 
         await User.create({
             email: email,
-            password: hashSync(pwd, genSaltSync())
+            password: hashSync(pwd, genSaltSync()),
+            role: isAdmin? ROLE_TYPES.ADMIN : ROLE_TYPES.CUSTOMER
         });
 
         AuthController.sendActivationEmail(email);

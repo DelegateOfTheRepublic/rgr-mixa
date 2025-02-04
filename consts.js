@@ -26,4 +26,4 @@ export const RATING_STARS = Object.freeze({
     ONE: 1
 })
 
-export const RESERVATION_MINUTES = 30
+export const RESERVATION_SECONDS = 1800

@@ -42,7 +42,7 @@ export const arrivedProductsHTML = (arrivedProducts) => {
         <div class="products__product">
             <div class="title">
                 <img src="${product.image}" alt="image"/>
-                <span>${product.name}</span>
+                <span>${product.model}</span>
             </div>
             <div class="body">
                 <span>Ценая товара: ${product.price}&#8381;</span>
@@ -96,7 +96,7 @@ export const productStockHTML = (product, stockMsg) => {
                 <div class="products__product">
                     <div class="title">
                         <img src="${product.image}" alt="image"/>
-                        <span>${product.name}</span>
+                        <span>${product.model}</span>
                     </div>
                 </div>
             </div>

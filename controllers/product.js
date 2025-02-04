@@ -1,6 +1,6 @@
 import path from "path"
 import _ from "lodash"
-import {Cart, Cart_Product, Category, Order, Order_Product, Product, Subcategory, Rating} from "../db/models.js";
+import {Cart, Cart_Product, Category, Order_Product, Product, Subcategory, Rating} from "../db/models.js";
 import {RATING_STARS} from "../consts.js";
 
 
@@ -16,6 +16,7 @@ class ProductController {
         const category = await product.getCategory()
         const subcategory = await product.getSubcategory()
         const rating = await product.getRating()
+        const discount = await product.getDiscount()
 
         const jsonProduct = {}
 
@@ -36,6 +37,7 @@ class ProductController {
         }
 
         jsonProduct.rating = rating
+        jsonProduct.discount = discount
 
         return res.status(200).json(jsonProduct)
     }
@@ -76,8 +78,9 @@ class ProductController {
         }
 
         req.body.image = `/${imagePath}/${imageName}`
+        req.body.stockQuantity = _.toNumber(req.body.stockQuantity)
 
-        product = await product.update(...req.body)
+        product = await product.update(req.body)
 
         if (product.price !== oldPrice) {
             await Cart.updateTotalCosts(product)
@@ -87,15 +90,17 @@ class ProductController {
     }
 
     async updateRating(req, res) {
-        const { star, score } = req.body
+        const { stars } = req.body
 
         let rating = await Rating.findOne({
             where: {
                 productId: req.params.id,
             }
         })
+        let productStars = [...rating.stars]
+        productStars[_.toNumber(stars) - 1] += 1
 
-        rating.stars[RATING_STARS[_.toUpper(star)] - 1] += _.toNumber(score)
+        rating.stars = productStars
         rating = await rating.save()
 
         return res.status(200).json({ 'rating': rating })

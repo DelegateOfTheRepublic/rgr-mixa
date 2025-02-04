@@ -4,10 +4,8 @@ import {
     Order,
     Order_Product,
     OrderHistory,
-    OrderHistory_Product,
     Product,
     ShippingAddress,
-    User
 } from "../db/models.js";
 import ShortUniqueId from "short-unique-id";
 import {ORDER_STATUSES} from "../consts.js";
@@ -25,8 +23,8 @@ class OrderController {
     async create(req, res) {
         const curDate = new Date()
         const rndDay = _.random(2, 14, false)
-        const { cartId, paymentMethod, shippingAddressId } = req.body
-        const cart = await Cart.findByPk(cartId)
+        const { paymentMethod, shippingAddressId } = req.body
+        const cart = await Cart.findByPk(req.user.cartId)
         const cartProducts = await cart.getProducts()
         const order = await Order.create({
             userId: req.user.id,
@@ -49,17 +47,19 @@ class OrderController {
 
         for (let product of cartProducts) {
             let discount = await product.getDiscount()
-            let discountedPrice = (1 - discount) * product.price
-            jsonOrder.discountedTotalCost += discountedPrice
+            let discountedPrice = discount === 0? 0 : (1 - discount) * product.price
             let productAmount = (await Cart_Product.findOne({
                 where: {
                     cartId: cart.id,
                     productId: product.id,
                 }
-            })).productAmount
+            })).amount
+
+            jsonOrder.discountedTotalCost += discountedPrice * productAmount
+
             await order.addProduct(product, {
                 through: {
-                    productAmount,
+                    amount: productAmount,
                     price: product.price,
                     discount,
                 }
@@ -158,7 +158,7 @@ class OrderController {
             arrivalDate: new Date()
         })
 
-        sendEmail(...emailData)
+        sendEmail(emailData.subject, emailData.html, emailData.email)
 
         return res.status(200).json(`An email was sent to the user with the mail "${req.user.email}"` +
             ` about the incoming order "${order.number}"`)

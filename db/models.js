@@ -1,10 +1,9 @@
 import {BOOLEAN, DATE, ENUM, FLOAT, INTEGER, JSON, Model, Op, STRING} from 'sequelize'
 import {seq} from './db.js'
-import {ORDER_STATUSES, PAYMENT_METHODS, ROLE_TYPES} from "../consts.js"
+import {ORDER_STATUSES, PAYMENT_METHODS, RESERVATION_SECONDS, ROLE_TYPES} from "../consts.js"
 import _ from "lodash";
 import {sendEmail} from "../emailNotification.js";
 import {productStockHTML} from "../htmlBlanks.js";
-import product from "../controllers/product.js";
 import {CronJob} from "cron";
 
 
@@ -31,7 +30,7 @@ class Product extends Model {
             }
         })).stars
 
-        const rating = _.sum(stars.map((star, index) => star * (index + 1))) / _.sum(stars)
+        const rating = _.sum(stars.map((star, index) => star * (index + 1))) / _.sum(stars) || 0
 
         return rating
     }
@@ -85,22 +84,19 @@ Product.init(
     {
         sequelize: seq,
         timestamps: false,
+        hooks: {
+            async afterUpdate(instance, options) {
+                if (instance.previous().stockQuantity === 0 && instance.stockQuantity !== 0) {
+                    await Wishlist.sendNotification(instance, 'Товар вновь в наличии')
+                    await Cart.sendNotification(instance, 'Товар вновь в наличии')
+                } else if (instance.previous().stockQuantity !== 0 && instance.stockQuantity === 0) {
+                    await Wishlist.sendNotification(instance, 'Товар закончился')
+                    await Cart.sendNotification(instance, 'Товар закончился')
+                }
+            }
+        }
     }
 )
-
-Product.afterUpdate(async instance => {
-    if (instance.stockQuantity === 0) {
-        await Wishlist.sendNotification(product, 'Товар закончился')
-        await Cart.sendNotification(product, 'Товар закончился')
-    }
-})
-
-Product.beforeUpdate(async (instance, options) => {
-    if (instance.stockQuantity === 0) {
-        await Wishlist.sendNotification(product, 'Товар вновь в наличии')
-        await Cart.sendNotification(product, 'Товар вновь в наличии')
-    }
-})
 
 class Wishlist extends Model {
     static async sendNotification(product, msg) {
@@ -327,9 +323,8 @@ class Order extends Model {
     }
 
     startAwaitingPayment() {
-        const SECONDS_TO_WAIT = 1800;
         const curDate = new Date();
-        const dateToRunCode = new Date(curDate.setSeconds(curDate.getSeconds() + SECONDS_TO_WAIT));
+        const dateToRunCode = new Date(curDate.setSeconds(curDate.getSeconds() + RESERVATION_SECONDS));
         this.cronJob = new CronJob(dateToRunCode, async () => {
             await this.moveToHistory()
         })
@@ -348,8 +343,9 @@ Order.init(
     {
         number: {
             type: STRING,
+            defaultValue: 0,
             set(value) {
-                if (_.isNull(this.getDataValue('number'))) {
+                if (_.isUndefined(this.getDataValue('number'))) {
                     this.setDataValue('number', value);
                 } else {
                     throw new Error("Field 'number' is readonly")
@@ -389,15 +385,16 @@ class Cart extends Model {
                 productId: product.id
             }
         })
+        const discount = await product.getDiscount()
 
         for (let cartProduct of cartProducts) {
             let oldCost = cartProduct.cost
             await cartProduct.update({
-                cost: cartProduct.amount * product.price,
+                cost: cartProduct.amount * product.price * (1 - discount),
             })
             const cart = await Cart.findByPk(cartProduct.cartId)
             await cart.update({
-                totalCost: cart.totalCost - oldCost + cartProduct.cost,
+                totalCost: cart.totalCost - oldCost + cartProduct.amount * product.price * (1 - discount),
             })
         }
     }
@@ -538,31 +535,31 @@ const Cart_Product = seq.define('Cart_Product', {
     },
     cost: {
         type: FLOAT,
-        allowNull: false,
+        defaultValue: 0
     }
 }, { timestamps: false, })
 
 Category.hasMany(Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE'})
-User.hasOne(Token, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-User.hasMany(Order, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-User.hasMany(OrderHistory, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-Product.belongsToMany(Cart, { through: Cart_Product })
-Cart.belongsToMany(Product, { through: Cart_Product })
-Cart.hasOne(User, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+User.hasOne(Token, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'userId' })
+User.hasMany(Order, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'userId' })
+User.hasMany(OrderHistory, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'userId' })
+Product.belongsToMany(Cart, { through: Cart_Product, foreignKey: 'productId' })
+Cart.belongsToMany(Product, { through: Cart_Product, foreignKey: 'cartId' })
+Cart.hasOne(User, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'cartId' })
 ShippingAddress.hasMany(Order, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 ShippingAddress.hasMany(OrderHistory, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-Product.belongsToMany(Order, { through: Order_Product })
-Order.belongsToMany(Product, { through: Order_Product })
-Product.belongsToMany(OrderHistory, { through: OrderHistory_Product })
+Product.belongsToMany(Order, { through: Order_Product, foreignKey: 'productId' })
+Order.belongsToMany(Product, { through: Order_Product, foreignKey: 'orderId' })
+Product.belongsToMany(OrderHistory, { through: OrderHistory_Product, foreignKey: 'productId' })
 OrderHistory.belongsToMany(Product, { through: OrderHistory_Product })
-Product.belongsToMany(User, { through: Wishlist })
-User.belongsToMany(Product, { through: Wishlist })
-Product.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+Product.belongsToMany(User, { through: Wishlist, foreignKey: 'productId' })
+User.belongsToMany(Product, { through: Wishlist, foreignKey: 'userId' })
+Product.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'productId' })
 Category.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 Subcategory.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 Subcategory.hasMany(Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 Category.hasMany(Subcategory, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-Product.hasOne(Rating, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+Product.hasOne(Rating, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'productId' })
 
 
 export {
