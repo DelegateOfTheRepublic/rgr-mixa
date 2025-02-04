@@ -7,7 +7,6 @@ import { authRouter } from "./auth.js";
 import { verifyToken } from "../middleware/token.js";
 import {subcategoryRouter} from "./subcategory.js";
 import {userRouter} from "./user.js";
-import {paymentRouter} from "./payment.js";
 import {discountRouter} from "./discount.js";
 
 
@@ -20,5 +19,4 @@ router.use('/cart', cartRouter)
 router.use('/order', orderRouter)
 router.use('/auth', authRouter)
 router.use('/user', userRouter)
-router.use('/payment', paymentRouter)
 router.use('/discounts', discountRouter)

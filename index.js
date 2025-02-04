@@ -10,6 +10,7 @@ const PORT = 8000
 
 app.use(express.json())
 app.use('/uploads', express.static(path.join(`${process.cwd()}/uploads`)))
+app.use('/salesReports', express.static(path.join(`${process.cwd()}/salesReports`)))
 app.use(fileUpload({}))
 app.use('/api', router)
 

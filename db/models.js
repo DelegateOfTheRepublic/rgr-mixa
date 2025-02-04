@@ -1,9 +1,11 @@
-import {STRING, INTEGER, FLOAT, BOOLEAN, ENUM, DATE, Model, JSON, Op} from 'sequelize'
-import { seq } from './db.js'
+import {BOOLEAN, DATE, ENUM, FLOAT, INTEGER, JSON, Model, Op, STRING} from 'sequelize'
+import {seq} from './db.js'
 import {ORDER_STATUSES, PAYMENT_METHODS, ROLE_TYPES} from "../consts.js"
 import _ from "lodash";
-import cart from "../controllers/cart.js";
-import discount from "../controllers/discount.js";
+import {sendEmail} from "../emailNotification.js";
+import {productStockHTML} from "../htmlBlanks.js";
+import product from "../controllers/product.js";
+import {CronJob} from "cron";
 
 
 class Product extends Model {
@@ -41,8 +43,7 @@ class Product extends Model {
         const dicsount = await Discount.findOne({
             where: {
                 productId: this.id,
-                [Op.or]: { categoryId },
-                [Op.or]: { subcategoryId }
+                [Op.or]: [{ categoryId }, { subcategoryId }]
             }
         })
 
@@ -87,6 +88,36 @@ Product.init(
     }
 )
 
+Product.afterUpdate(async instance => {
+    if (instance.stockQuantity === 0) {
+        await Wishlist.sendNotification(product, 'Товар закончился')
+        await Cart.sendNotification(product, 'Товар закончился')
+    }
+})
+
+Product.beforeUpdate(async (instance, options) => {
+    if (instance.stockQuantity === 0) {
+        await Wishlist.sendNotification(product, 'Товар вновь в наличии')
+        await Cart.sendNotification(product, 'Товар вновь в наличии')
+    }
+})
+
+class Wishlist extends Model {
+    static async sendNotification(product, msg) {
+        const users = await product.getUsers()
+
+        for (let user of users) {
+            sendEmail(
+                msg,
+                productStockHTML(product, msg),
+                user.email
+            )
+        }
+    }
+}
+
+Wishlist.init({}, { sequelize: seq, timestamps: false, })
+
 const Rating = seq.define('rating', {
     id: {
         type: INTEGER,
@@ -99,7 +130,7 @@ const Rating = seq.define('rating', {
         type: JSON,
         defaultValue: [0, 0, 0, 0, 0]
     }
-})
+}, { timestamps: false, })
 
 const Category = seq.define('category', {
     id: {
@@ -113,7 +144,7 @@ const Category = seq.define('category', {
         type: STRING,
         allowNull: false,
     }
-})
+}, { timestamps: false, })
 
 const Subcategory = seq.define('subcategory', {
     id: {
@@ -127,7 +158,7 @@ const Subcategory = seq.define('subcategory', {
         type: STRING,
         allowNull: false,
     }
-})
+}, { timestamps: false, })
 
 const Discount = seq.define('discount', {
     id: {
@@ -141,7 +172,7 @@ const Discount = seq.define('discount', {
         type: FLOAT,
         allowNull: false,
     }
-})
+}, { timestamps: false, })
 
 const OrderHistory = seq.define('order_history', {
     id: {
@@ -177,24 +208,30 @@ const OrderHistory = seq.define('order_history', {
     },
 })
 
-const OrderHistory_Product = seq.define('order_history_product', {
-    id: {
-        type: INTEGER,
-        autoIncrement: true,
-        primaryKey: true,
-        allowNull: false,
-        unique: true,
-    },
-    amount: {
-        type: INTEGER,
-    },
-    price: {
-        type: FLOAT,
-    },
-    discount: {
-        type: FLOAT
+class OrderHistory_Product extends Model {
+    getCost() {
+        return this.price * this.amount * (1 - this.discount)
     }
-})
+}
+
+OrderHistory_Product.init(
+    {
+        amount: {
+            type: INTEGER,
+        },
+        price: {
+            type: FLOAT,
+        },
+        discount: {
+            type: FLOAT,
+            defaultValue: 0
+        }
+    },
+    {
+        sequelize: seq,
+        timestamps: false,
+    }
+)
 
 const ShippingAddress = seq.define('shipping_address', {
     id: {
@@ -208,9 +245,11 @@ const ShippingAddress = seq.define('shipping_address', {
         type: STRING,
         allowNull: false,
     }
-})
+}, { timestamps: false, })
 
 class Order extends Model {
+    cronJob = null;
+
     async getDiscountedTotalCost() {
         const orderedProducts = await Order_Product.findAll({
             where: {
@@ -218,17 +257,7 @@ class Order extends Model {
             }
         })
 
-        const discountedTotalCost = await orderedProducts.reduce(
-            async (total, orderedProduct) => {
-                const discountValue = await (await Product.findByPk(orderedProduct.id)).getDiscount()
-                total += (1 - discountValue) * orderedProduct.getCost()
-
-                return total
-            },
-            0
-        )
-
-        return discountedTotalCost
+        return _.sum(_.map(orderedProducts, orderedProduct => orderedProduct.getCost()))
     }
 
     async moveToHistory() {
@@ -265,7 +294,7 @@ class Order extends Model {
                 through: {
                     amount: orderProductRaw.orderProduct.amount,
                     price: orderProductRaw.orderProduct.price,
-                    discount: await orderProductRaw.product.getDiscount()
+                    discount: orderProductRaw.orderProduct.discount
                 }
             })
             if (this.status === ORDER_STATUSES.CANCELED) {
@@ -288,6 +317,30 @@ class Order extends Model {
         })
 
         return orderHistory
+    }
+
+    sendNotification(email) {
+        const html =
+            `<p>Статус заказа <strong>№${this.number}</strong> изменен на <strong>${this.status}</strong></p>`
+
+        sendEmail(`Заказ №${this.number}`, html, email)
+    }
+
+    startAwaitingPayment() {
+        const SECONDS_TO_WAIT = 1800;
+        const curDate = new Date();
+        const dateToRunCode = new Date(curDate.setSeconds(curDate.getSeconds() + SECONDS_TO_WAIT));
+        this.cronJob = new CronJob(dateToRunCode, async () => {
+            await this.moveToHistory()
+        })
+
+        this.cronJob.start()
+    }
+
+    stopAwaitingPayment() {
+        if (!_.isNull(this.cronJob)) {
+            this.cronJob.stop()
+        }
     }
 }
 
@@ -358,6 +411,21 @@ class Cart extends Model {
         })
 
         return cartProduct.cost
+    }
+
+    static async sendNotification(product, msg) {
+        const users = _.map(
+            await product.getCarts(),
+            async cart => await User.findOne({ cartId: cart.id })
+        )
+
+        for (let user of users) {
+            sendEmail(
+                msg,
+                productStockHTML(product, msg),
+                user.email
+            )
+        }
     }
 }
 
@@ -439,7 +507,7 @@ const Token = seq.define('token', {
 
 class Order_Product extends Model {
     getCost() {
-        return this.amount * this.price
+        return this.amount * this.price * (1 - this.discount)
     }
 }
 
@@ -451,6 +519,10 @@ Order_Product.init(
         },
         price: {
             type: FLOAT,
+        },
+        discount: {
+            type: FLOAT,
+            defaultValue: 0
         }
     },
     {
@@ -468,7 +540,7 @@ const Cart_Product = seq.define('Cart_Product', {
         type: FLOAT,
         allowNull: false,
     }
-})
+}, { timestamps: false, })
 
 Category.hasMany(Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE'})
 User.hasOne(Token, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
@@ -483,8 +555,8 @@ Product.belongsToMany(Order, { through: Order_Product })
 Order.belongsToMany(Product, { through: Order_Product })
 Product.belongsToMany(OrderHistory, { through: OrderHistory_Product })
 OrderHistory.belongsToMany(Product, { through: OrderHistory_Product })
-Product.belongsToMany(User, { through: 'Wishlist' })
-User.belongsToMany(Product, { through: 'Wishlist' })
+Product.belongsToMany(User, { through: Wishlist })
+User.belongsToMany(Product, { through: Wishlist })
 Product.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 Category.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
 Subcategory.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })

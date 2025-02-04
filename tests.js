@@ -22,13 +22,27 @@ import {Discount, Subcategory} from "./db/models.js";
 //
 // const SECONDS_TO_WAIT = 10;
 //
-// const dateToRunCode = new Date(new Date().setSeconds(new Date().getSeconds() + SECONDS_TO_WAIT));
+const curDate = new Date();
+// const dateToRunCode = new Date(curDate.setSeconds(curDate.getSeconds() + SECONDS_TO_WAIT));
 // console.log(dateToRunCode)
-//  new CronJob(
+//  const job = new CronJob(
 //    dateToRunCode,
 //    function(){
 //      console.log("This code will run once.");
 //    },
-// ).start();
+// )
+//
+// job.start()
+// job.stop()
 
-console.log(new Date(new Date().setDate(new Date().getDay() + 30)))
+// console.log(new Date(new Date().setDate(new Date().getDay() + 30)))
+
+// import {Rating} from "./db/models.js";
+//
+// const rating = await Rating.findByPk(1)
+//
+// await rating.update({
+//     stars: [10, 10, 10, 5, 10]
+// })
+
+console.log(curDate.getFullYear(), curDate.getMonth(), curDate.getDate());

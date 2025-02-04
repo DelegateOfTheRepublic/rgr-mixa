@@ -1,8 +1,20 @@
-import {Cart, Cart_Product, Order, Order_Product, Product, ShippingAddress, User} from "../db/models.js";
+import {
+    Cart,
+    Cart_Product,
+    Order,
+    Order_Product,
+    OrderHistory,
+    OrderHistory_Product,
+    Product,
+    ShippingAddress,
+    User
+} from "../db/models.js";
 import ShortUniqueId from "short-unique-id";
 import {ORDER_STATUSES} from "../consts.js";
 import {sendEmail} from "../emailNotification.js";
 import {arrivedProductsHTML} from "../htmlBlanks.js";
+import _ from "lodash";
+import {Op} from "sequelize";
 
 
 class OrderController {
@@ -11,6 +23,8 @@ class OrderController {
     }
 
     async create(req, res) {
+        const curDate = new Date()
+        const rndDay = _.random(2, 14, false)
         const { cartId, paymentMethod, shippingAddressId } = req.body
         const cart = await Cart.findByPk(cartId)
         const cartProducts = await cart.getProducts()
@@ -19,6 +33,7 @@ class OrderController {
             number: new ShortUniqueId({ length: 10 }).rnd(),
             payment: paymentMethod,
             shippingAddressId,
+            deliveryDate: new Date(`${curDate.getFullYear()}-${curDate.getMonth()}-${curDate.getDate() + rndDay}`),
         })
         const jsonOrder = {
             id: order.id,
@@ -45,7 +60,8 @@ class OrderController {
             await order.addProduct(product, {
                 through: {
                     productAmount,
-                    price: product.price
+                    price: product.price,
+                    discount,
                 }
             })
             jsonOrder.totalCost += productAmount * product.price
@@ -59,6 +75,8 @@ class OrderController {
             })
             await Product.increment({ stockQuantity: -productAmount }, { where: { id: product.id } })
         }
+
+        order.startAwaitingPayment()
 
         return res.status(201).json({ 'order': jsonOrder })
     }
@@ -85,6 +103,27 @@ class OrderController {
         order = await Order.findByPk(req.params.id, { include: Product })
 
         return res.status(200).json({ 'order': order })
+    }
+
+    async payment(req, res) {
+        const { id } = req.params
+        const order = await Order.findByPk(id)
+
+        await order.update({ status: ORDER_STATUSES.PACKING })
+        order.stopAwaitingPayment()
+
+        return res.status(200).json('Payment completed successfully')
+    }
+
+    async changeStatus(req, res) {
+        const { status } = req.body
+        const { id } = req.params
+        let order = await Order.findByPk(id)
+
+        order = await order.update({ status })
+        order.sendNotification(req.user.email)
+
+        return res.status(200).json('The orders status haas been successfully changed')
     }
 
     async arrived(req, res) {
@@ -150,6 +189,67 @@ class OrderController {
 
         return res.status(400).json({ 'error': 'It is not possible to cancel the order ' +
                 'because the orders status is not "Awaiting payment" or "Packing"' })
+    }
+
+    async salesReport(req, res) {
+        const { startSalesPeriod, endSalesPeriod } = req.body
+        let freqSoldProduct = null
+        let profitableProduct = null
+        const products = {}
+        const salesByDates = {}
+
+        const ordersHistory = await OrderHistory.findAll(
+            {
+                status: ORDER_STATUSES.RECEIVED,
+                receiveDate: {
+                    [Op.between]: [startSalesPeriod, endSalesPeriod]
+                },
+                include: Product,
+                order: [['deliveryDate', 'ASC']]
+            }
+        )
+
+        if (_.isEmpty(ordersHistory)) {
+            return res.status(200).json('No sales')
+        }
+
+        for (let orderHistory of ordersHistory) {
+            for (let product of orderHistory.products) {
+                if (!_.isUndefined(product.name)) {
+                    products[product.name].amount += product.OrderHistory_Product.amount
+                    products[product.name].cost += product.OrderHistory_Product.getCost()
+                } else {
+                    products[product.name] = {
+                        amount: product.OrderHistory_Product.amount,
+                        cost: product.OrderHistory_Product.getCost()
+                    }
+                }
+            }
+
+            if (!_.isUndefined(salesByDates[orderHistory.deliveryDate])) {
+                salesByDates[orderHistory.deliveryDate] += _.max(
+                    [orderHistory.totalCost, orderHistory.discountedTotalCost]
+                )
+            } else {
+                salesByDates[orderHistory.deliveryDate] = _.max(
+                    [orderHistory.totalCost, orderHistory.discountedTotalCost]
+                )
+            }
+        }
+
+        freqSoldProduct = products[0]
+        profitableProduct = products[0]
+        for (let product of products) {
+            if (product.cost > profitableProduct.cost) {
+                profitableProduct = product
+            }
+
+            if (product.amount > freqSoldProduct.amount) {
+                freqSoldProduct = product
+            }
+        }
+
+        return res.status(200).json({ products, salesByDates, freqSoldProduct, profitableProduct })
     }
 }
 

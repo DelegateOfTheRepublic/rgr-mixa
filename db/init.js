@@ -6,7 +6,7 @@ import _ from 'lodash'
 import { seq } from './db.js'
 
 import { Cart, Category, Order, Product, ShippingAddress, Token, User } from './models.js'
-import { data } from '../nodemail.js'
+import { config } from '../config.js'
 
 
 async function init() {
@@ -95,7 +95,7 @@ async function init() {
         newUser.isActivated = true
         await newUser.save()
 
-        const token = jwt.sign({ email: newUser.email }, data.SECRET_KEY, { expiresIn: '24h' })
+        const token = jwt.sign({ email: newUser.email }, config.SECRET_KEY, { expiresIn: '24h' })
         await Token.create({
             userId,
             token
