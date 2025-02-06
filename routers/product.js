@@ -1,6 +1,5 @@
 import { Router } from 'express'
 import ProductController from '../controllers/product.js'
-import {verifyProductField, verifyProductFields} from "../middleware/productFields.js";
 
 
 export const productRouter = new Router()

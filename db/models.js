@@ -1,10 +1,11 @@
-import {BOOLEAN, DATE, ENUM, FLOAT, INTEGER, JSON, Model, Op, STRING} from 'sequelize'
+import {BOOLEAN, DataTypes, DATE, ENUM, FLOAT, INTEGER, Model, Op, STRING} from 'sequelize'
 import {seq} from './db.js'
 import {ORDER_STATUSES, PAYMENT_METHODS, RESERVATION_SECONDS, ROLE_TYPES} from "../consts.js"
 import _ from "lodash";
 import {sendEmail} from "../emailNotification.js";
 import {productStockHTML} from "../htmlBlanks.js";
 import {CronJob} from "cron";
+import {cronJob} from "../index.js";
 
 
 class Product extends Model {
@@ -41,12 +42,15 @@ class Product extends Model {
 
         const dicsount = await Discount.findOne({
             where: {
-                productId: this.id,
-                [Op.or]: [{ categoryId }, { subcategoryId }]
+                [Op.or]: [{ productId: this.id }, { categoryId }, { subcategoryId }]
             }
         })
 
         return !_.isNull(dicsount)? dicsount.value : 0
+    }
+
+    async applyDiscount() {
+        await Cart.updateTotalCosts(this)
     }
 }
 
@@ -102,11 +106,19 @@ class Wishlist extends Model {
     static async sendNotification(product, msg) {
         const users = await product.getUsers()
 
+        product = product.toJSON()
+        product.img = {
+            fileName: product.image.split('/').slice(-1),
+            path: `${process.cwd()}${product.image}`,
+            cid: product.model,
+        }
+
         for (let user of users) {
             sendEmail(
                 msg,
                 productStockHTML(product, msg),
-                user.email
+                user.email,
+                [product.img]
             )
         }
     }
@@ -123,52 +135,98 @@ const Rating = seq.define('rating', {
         unique: true,
     },
     stars: {
-        type: JSON,
+        type: DataTypes.JSON,
         defaultValue: [0, 0, 0, 0, 0]
     }
 }, { timestamps: false, })
 
-const Category = seq.define('category', {
-    id: {
-        type: INTEGER,
-        autoIncrement: true,
-        primaryKey: true,
-        allowNull: false,
-        unique: true,
-      },
-    name: {
-        type: STRING,
-        allowNull: false,
-    }
-}, { timestamps: false, })
+class Category extends Model {
+    async applyDiscount() {
+        const products = await Product.findAll({
+            categoryId: this.id,
+        })
 
-const Subcategory = seq.define('subcategory', {
-    id: {
-        type: INTEGER,
-        autoIncrement: true,
-        primaryKey: true,
-        allowNull: false,
-        unique: true,
-    },
-    name: {
-        type: STRING,
-        allowNull: false,
+        for (let product of products) {
+            await product.applyDiscount()
+        }
     }
-}, { timestamps: false, })
+}
 
-const Discount = seq.define('discount', {
-    id: {
-        type: INTEGER,
-        autoIncrement: true,
-        primaryKey: true,
-        allowNull: false,
-        unique: true,
+Category.init(
+    {
+        name: {
+            type: STRING,
+            allowNull: false,
+        }
     },
-    value: {
-        type: FLOAT,
-        allowNull: false,
+    {
+        sequelize: seq,
+        timestamps: false,
     }
-}, { timestamps: false, })
+)
+
+class Subcategory extends Model {
+    async applyDiscount() {
+        const products = await Product.findAll({
+            where: {
+                subcategoryId: this.subcategoryId,
+            }
+        })
+
+        for (let product of products) {
+            await product.applyDiscount()
+        }
+    }
+}
+
+Subcategory.init(
+    {
+        name: {
+            type: STRING,
+            allowNull: false,
+        }
+    },
+    {
+        sequelize: seq,
+        timestamps: false,
+    }
+)
+
+const Discount = seq.define(
+    'discount',
+    {
+        id: {
+            type: INTEGER,
+            autoIncrement: true,
+            primaryKey: true,
+            allowNull: false,
+            unique: true,
+        },
+        value: {
+            type: FLOAT,
+            allowNull: false,
+        }
+    },
+    {
+        timestamps: false,
+        hooks: {
+            async afterSave(instance, options) {
+                const modelNameId = Object.keys(instance.toJSON())
+                    .filter(key => key.endsWith("Id") && !_.isNull(instance[key]))[0]
+
+                const modelName = _.capitalize(modelNameId.split("Id")[0])
+                await (await seq.model(modelName).findByPk(instance[modelNameId])).applyDiscount()
+            },
+            async afterDestroy(instance, options) {
+                const modelNameId = Object.keys(instance.toJSON())
+                    .filter(key => key.endsWith("Id") && !_.isNull(instance[key]))[0]
+
+                const modelName = _.capitalize(modelNameId.split("Id")[0])
+                await (await seq.model(modelName).findByPk(instance[modelNameId])).applyDiscount()
+            }
+        }
+    }
+)
 
 const OrderHistory = seq.define('order_history', {
     id: {
@@ -194,6 +252,9 @@ const OrderHistory = seq.define('order_history', {
         type: FLOAT
     },
     formationDate: {
+        type: DATE,
+    },
+    deliveryDate: {
         type: DATE,
     },
     arrivalDate: {
@@ -244,8 +305,6 @@ const ShippingAddress = seq.define('shipping_address', {
 }, { timestamps: false, })
 
 class Order extends Model {
-    cronJob = null;
-
     async getDiscountedTotalCost() {
         const orderedProducts = await Order_Product.findAll({
             where: {
@@ -253,56 +312,48 @@ class Order extends Model {
             }
         })
 
-        return _.sum(_.map(orderedProducts, orderedProduct => orderedProduct.getCost()))
+        return _.sum(_.map(orderedProducts, orderedProduct =>
+            orderedProduct.discount === 0?
+                0 : (1 - orderedProduct.discount) * orderedProduct.amount * orderedProduct.price
+        ))
     }
 
     async moveToHistory() {
         const orderHistory = await OrderHistory.create({
             userId: this.userId,
             number: this.number,
-            status: ORDER_STATUSES.CANCELED,
+            status: this.status,
             payment: this.payment,
             totalCost: this.totalCost,
             discountedTotalCost: await this.getDiscountedTotalCost(),
             formationDate: this.createdAt,
+            deliveryDate: this.deliveryDate,
             arrivalDate: this.arrivalDate,
             receiveDate: this.receiveDate,
             shippingAddressId: this.shippingAddressId,
         })
 
-        const orderProductRaws = (await this.getProducts()).map(
-            async function(product) {
-                const orderProduct = await Order_Product.findOne({
-                    where: {
-                        orderId: this.id,
-                        productId: product.id,
-                    }
-                })
+        const products = await this.getProducts()
 
-                return {
-                    product: product,
-                    orderProduct: orderProduct,
+        for (let product of products) {
+            const orderProduct = await Order_Product.findOne({
+                where: {
+                    orderId: this.id,
+                    productId: product.id,
                 }
-            }
-        )
-        for (let orderProductRaw of orderProductRaws) {
-            await orderHistory.addProduct(orderProductRaw.product, {
+            })
+
+            await orderHistory.addProduct(product, {
                 through: {
-                    amount: orderProductRaw.orderProduct.amount,
-                    price: orderProductRaw.orderProduct.price,
-                    discount: orderProductRaw.orderProduct.discount
+                    amount: orderProduct.amount,
+                    price: orderProduct.price,
+                    discount: orderProduct.discount
                 }
             })
             if (this.status === ORDER_STATUSES.CANCELED) {
-                await Product.increment(
-                {
-                        stockQuantity: orderProductRaw.orderProduct.amount
-                    },
-                    {
-                        where: {
-                            id: orderProductRaw.product.id
-                        }
-                    })
+                await product.update({
+                    stockQuantity: product.stockQuantity + orderProduct.amount,
+                })
             }
         }
 
@@ -322,19 +373,20 @@ class Order extends Model {
         sendEmail(`Заказ №${this.number}`, html, email)
     }
 
-    startAwaitingPayment() {
+    async startAwaitingPayment() {
         const curDate = new Date();
         const dateToRunCode = new Date(curDate.setSeconds(curDate.getSeconds() + RESERVATION_SECONDS));
-        this.cronJob = new CronJob(dateToRunCode, async () => {
+        cronJob.name = new CronJob(dateToRunCode, async () => {
+            await this.update({ status: ORDER_STATUSES.CANCELED })
             await this.moveToHistory()
         })
 
-        this.cronJob.start()
+        cronJob.name.start()
     }
 
-    stopAwaitingPayment() {
-        if (!_.isNull(this.cronJob)) {
-            this.cronJob.stop()
+    async stopAwaitingPayment() {
+        if (!_.isNull(cronJob.name)) {
+            cronJob.name.stop()
         }
     }
 }
@@ -365,6 +417,9 @@ Order.init(
         totalCost: {
             type: FLOAT,
             defaultValue: 0
+        },
+        deliveryDate: {
+            type: DATE,
         },
         arrivalDate: {
             type: DATE,
@@ -416,11 +471,19 @@ class Cart extends Model {
             async cart => await User.findOne({ cartId: cart.id })
         )
 
+        product = product.toJSON()
+        product.img = {
+            fileName: product.image.split('/').slice(-1),
+            path: `${process.cwd()}${product.image}`,
+            cid: product.model,
+        }
+
         for (let user of users) {
             sendEmail(
                 msg,
                 productStockHTML(product, msg),
-                user.email
+                user.email,
+                [product.img]
             )
         }
     }
@@ -446,19 +509,31 @@ class User extends Model {
         const activeOrders = await Order.findAll({
             where: {
                 userId: this.id,
+                status: {
+                    [Op.notIn]: [ORDER_STATUSES.RECEIVED, ORDER_STATUSES.CANCELED]
+                }
             },
             include: Product
         })
         const receivedOrders = await OrderHistory.findAll({
             where: {
                 userId: this.id,
+                status: ORDER_STATUSES.RECEIVED
+            },
+            include: Product
+        })
+        const canceledOrders = await OrderHistory.findAll({
+            where: {
+                userId: this.id,
+                status: ORDER_STATUSES.CANCELED
             },
             include: Product
         })
 
         return {
             active: activeOrders,
-            received: receivedOrders
+            received: receivedOrders,
+            canceled: canceledOrders
         }
     }
 }
@@ -539,7 +614,7 @@ const Cart_Product = seq.define('Cart_Product', {
     }
 }, { timestamps: false, })
 
-Category.hasMany(Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE'})
+Category.hasMany(Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'categoryId'})
 User.hasOne(Token, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'userId' })
 User.hasMany(Order, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'userId' })
 User.hasMany(OrderHistory, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'userId' })
@@ -555,10 +630,10 @@ OrderHistory.belongsToMany(Product, { through: OrderHistory_Product })
 Product.belongsToMany(User, { through: Wishlist, foreignKey: 'productId' })
 User.belongsToMany(Product, { through: Wishlist, foreignKey: 'userId' })
 Product.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'productId' })
-Category.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-Subcategory.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-Subcategory.hasMany(Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
-Category.hasMany(Subcategory, { onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+Category.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'categoryId' })
+Subcategory.hasOne(Discount, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'subcategoryId' })
+Subcategory.hasMany(Product, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'subcategoryId' })
+Category.hasMany(Subcategory, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'categoryId' })
 Product.hasOne(Rating, { onDelete: 'CASCADE', onUpdate: 'CASCADE', foreignKey: 'productId' })
 
 

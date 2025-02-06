@@ -8,8 +8,7 @@
 // console.log(rating.toJSON())
 
 import _ from "lodash";
-import {RATING_STARS} from "./consts.js";
-import {Discount, Subcategory} from "./db/models.js";
+import {ORDER_STATUSES, RATING_STARS} from "./consts.js";
 
 // const rating = _.sum([1, 1, 0, 1, 10].map((star, index) => star * (index + 1))) / 13;
 // console.log(rating);
@@ -22,7 +21,7 @@ import {Discount, Subcategory} from "./db/models.js";
 //
 // const SECONDS_TO_WAIT = 10;
 //
-const curDate = new Date();
+// const curDate = new Date();
 // const dateToRunCode = new Date(curDate.setSeconds(curDate.getSeconds() + SECONDS_TO_WAIT));
 // console.log(dateToRunCode)
 //  const job = new CronJob(
@@ -45,4 +44,8 @@ const curDate = new Date();
 //     stars: [10, 10, 10, 5, 10]
 // })
 
-console.log(curDate.getFullYear(), curDate.getMonth(), curDate.getDate());
+// console.log(curDate.getFullYear(), curDate.getMonth(), curDate.getDate());
+// const a = 10, b= 6, c = 0
+// console.log(`${c || a} | ${b || a}`)
+// const f = _.filter(Object.keys(ORDER_STATUSES), (key) => ORDER_STATUSES[key] === 'в пути')[0]
+// console.log(ORDER_STATUSES[f])

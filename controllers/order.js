@@ -40,6 +40,7 @@ class OrderController {
             number: order.number,
             status: order.status,
             payment: order.payment,
+            deliveryDate: order.deliveryDate,
             products: [],
             discountedTotalCost: 0,
             totalCost: 0
@@ -71,12 +72,13 @@ class OrderController {
                 discount,
                 discountedPrice,
                 productAmount,
-                cost: discountedPrice * productAmount
+                cost: (discountedPrice || product.price) * productAmount
             })
-            await Product.increment({ stockQuantity: -productAmount }, { where: { id: product.id } })
+            await product.update({ stockQuantity: product.stockQuantity - productAmount })
         }
 
-        order.startAwaitingPayment()
+        await order.update({ totalCost: jsonOrder.totalCost })
+        await order.startAwaitingPayment()
 
         return res.status(201).json({ 'order': jsonOrder })
     }
@@ -107,10 +109,10 @@ class OrderController {
 
     async payment(req, res) {
         const { id } = req.params
-        const order = await Order.findByPk(id)
+        let order = await Order.findByPk(id)
 
-        await order.update({ status: ORDER_STATUSES.PACKING })
-        order.stopAwaitingPayment()
+        order = await order.update({ status: ORDER_STATUSES.PACKING })
+        await order.stopAwaitingPayment()
 
         return res.status(200).json('Payment completed successfully')
     }
@@ -120,7 +122,16 @@ class OrderController {
         const { id } = req.params
         let order = await Order.findByPk(id)
 
-        order = await order.update({ status })
+        const newStatus = ORDER_STATUSES[_.filter(
+            Object.keys(ORDER_STATUSES),
+            (key) => ORDER_STATUSES[key] === status
+        )[0]]
+
+        if (_.isUndefined(newStatus)) {
+            return res.status(400).json({ 'error': `The orders status '${newStatus}' is not valid.` })
+        }
+
+        order = await order.update({ status: newStatus })
         order.sendNotification(req.user.email)
 
         return res.status(200).json('The orders status haas been successfully changed')
@@ -128,29 +139,38 @@ class OrderController {
 
     async arrived(req, res) {
         const order = await Order.findByPk(req.params.id)
+        const orderProducts = await Order_Product.findAll({
+            where: {
+                orderId: order.id,
+            }
+        })
         const arrivedProducts = {
             shippingAddress: (await ShippingAddress.findByPk(order.shippingAddressId)).address,
-            products: (
-                await Order_Product.findAll({
-                    where: {
-                        orderId: order.id,
-                    }
-                })
-            ).map(async orderProductRaw => {
-                const product = (await Product.findByPk(orderProductRaw.productId, {
-                    attributes: ["name", "image"]
-                })).toJSON()
-                product.price = orderProductRaw.price
-                product.amount = orderProductRaw.amount
-
-                return product
-            })
+            products: []
         }
+
+        for (let orderProductRaw of orderProducts) {
+            const product = (await Product.findByPk(orderProductRaw.productId, {
+                attributes: ["model", "image"]
+            })).toJSON()
+            product.price = orderProductRaw.price * (1 - orderProductRaw.discount)
+            product.amount = orderProductRaw.amount
+            product.cost = orderProductRaw.price * orderProductRaw.amount * (1 - orderProductRaw.discount)
+            product.img = {
+                fileName: product.image.split('/').slice(-1),
+                path: `${process.cwd()}${product.image}`,
+                cid: product.model,
+            }
+
+            arrivedProducts.products.push(product)
+        }
+
         const isMany = (await order.getProducts()).length >= 2
         const emailData = {
             subject: `${isMany? 'Товары ожидают' : 'Товар ожидает'} в пункте выдачи заказов`,
             html: arrivedProductsHTML(arrivedProducts),
             email: req.user.email,
+            attachments: arrivedProducts.products.map(product => product.img)
         }
 
         await order.update({
@@ -158,7 +178,7 @@ class OrderController {
             arrivalDate: new Date()
         })
 
-        sendEmail(emailData.subject, emailData.html, emailData.email)
+        sendEmail(emailData.subject, emailData.html, emailData.email, emailData.attachments)
 
         return res.status(200).json(`An email was sent to the user with the mail "${req.user.email}"` +
             ` about the incoming order "${order.number}"`)
@@ -201,11 +221,11 @@ class OrderController {
         const ordersHistory = await OrderHistory.findAll(
             {
                 status: ORDER_STATUSES.RECEIVED,
-                receiveDate: {
+                formationDate: {
                     [Op.between]: [startSalesPeriod, endSalesPeriod]
                 },
                 include: Product,
-                order: [['deliveryDate', 'ASC']]
+                order: [['formationDate', 'ASC']]
             }
         )
 
@@ -214,26 +234,22 @@ class OrderController {
         }
 
         for (let orderHistory of ordersHistory) {
-            for (let product of orderHistory.products) {
-                if (!_.isUndefined(product.name)) {
-                    products[product.name].amount += product.OrderHistory_Product.amount
-                    products[product.name].cost += product.OrderHistory_Product.getCost()
+            for (let product of orderHistory.Products) {
+                if (_.get(products, product.model, false)) {
+                    products[product.model].amount += product.OrderHistory_Product.amount
+                    products[product.model].cost += product.OrderHistory_Product.getCost()
                 } else {
-                    products[product.name] = {
+                    products[product.model] = {
                         amount: product.OrderHistory_Product.amount,
                         cost: product.OrderHistory_Product.getCost()
                     }
                 }
             }
 
-            if (!_.isUndefined(salesByDates[orderHistory.deliveryDate])) {
-                salesByDates[orderHistory.deliveryDate] += _.max(
-                    [orderHistory.totalCost, orderHistory.discountedTotalCost]
-                )
+            if (!_.isUndefined(salesByDates[orderHistory.formationDate])) {
+                salesByDates[orderHistory.formationDate] += orderHistory.discountedTotalCost || orderHistory.totalCost
             } else {
-                salesByDates[orderHistory.deliveryDate] = _.max(
-                    [orderHistory.totalCost, orderHistory.discountedTotalCost]
-                )
+                salesByDates[orderHistory.formationDate] = orderHistory.discountedTotalCost || orderHistory.totalCost
             }
         }
 

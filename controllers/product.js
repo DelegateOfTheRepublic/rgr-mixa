@@ -1,14 +1,24 @@
 import path from "path"
 import _ from "lodash"
 import {Cart, Cart_Product, Category, Order_Product, Product, Subcategory, Rating} from "../db/models.js";
-import {RATING_STARS} from "../consts.js";
 
 
 class ProductController {
     async list(req, res) {
         const products = await Product.findAll()
+        const jsonProducts = []
 
-        res.status(200).json(products)
+        for (let product of products) {
+            const discount = await product.getDiscount()
+
+            jsonProducts.push({
+                ...product.toJSON(),
+                discount,
+                discountedPrice: discount === 0? 0 : product.price * (1 - discount)
+            })
+        }
+
+        res.status(200).json(jsonProducts)
     }
 
     async one(req, res) {
@@ -38,6 +48,7 @@ class ProductController {
 
         jsonProduct.rating = rating
         jsonProduct.discount = discount
+        jsonProduct.discountedPrice = (1 - discount) * product.price
 
         return res.status(200).json(jsonProduct)
     }

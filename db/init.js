@@ -3,7 +3,6 @@ import { hashSync, genSaltSync } from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import randomEmail from 'random-email'
 import _ from 'lodash'
-import { seq } from './db.js'
 
 import { Cart, Category, Order, Product, ShippingAddress, Token, User } from './models.js'
 import { config } from '../config.js'

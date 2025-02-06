@@ -15,6 +15,7 @@
     "bcrypt": "^5.1.1",
     "cron": "^3.5.0",
     "dotenv": "^16.4.7",
+    "ejs": "^3.1.10",
     "express": "^4.21.2",
     "express-fileupload": "^1.5.1",
     "jsonwebtoken": "^9.0.2",
@@ -24,6 +25,7 @@
     "node-fetch": "^3.3.2",
     "nodemailer": "^6.10.0",
     "random-email": "^1.0.3",
+    "redis": "^4.7.0",
     "sequelize": "^6.37.5",
     "short-unique-id": "^5.2.0"
   }

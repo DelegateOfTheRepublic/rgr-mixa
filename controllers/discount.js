@@ -6,14 +6,19 @@ class DiscountController {
     async list(req, res) {
         const discounts = await Discount.findAll()
         const jsonDiscounts = []
-        let jsonDiscount = {}
 
         for (let discount of discounts) {
+            let jsonDiscount = {}
+
             for (let key of Object.keys(discount.toJSON())) {
                 if (!_.isNull(discount[key])) {
                     const splitedKey = key.split("Id")
                     if (splitedKey.length === 2) {
-                        jsonDiscount[splitedKey[0]] = (await seq.model(splitedKey[0]).findByPk(discount[key])).name
+                        const model = await seq.model(_.capitalize(splitedKey[0]))
+                            .findByPk(discount[key])
+
+                        jsonDiscount[splitedKey[0]] =
+                            !_.isUndefined(model.model)? model.model : model.name
                     } else {
                         jsonDiscount[key] = discount[key]
                     }
@@ -38,27 +43,18 @@ class DiscountController {
         return res.status(200).json('The discount has been added successfully.')
     }
     async update(req, res) {
-        const discount = await Discount.update(
-            {
-                value: _.toNumber(req.body.value),
-            },
-            {
-                where: {
-                    id: req.params.id,
-                }
-            }
-        )
+        const discount = await Discount.findByPk(req.params.id)
+        await discount.update({
+            value: _.toNumber(req.body.value),
+        })
 
         return res.status(200).json({ 'discount': discount })
     }
     async remove(req, res) {
-        await Discount.destroy({
-            where: {
-                id: req.params.id,
-            }
-        })
+        const discount = await Discount.findByPk(req.params.id)
+        await discount.destroy()
 
-        return res.status(200)
+        return res.status(200).json("Success")
     }
 }
 

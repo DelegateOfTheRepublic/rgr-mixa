@@ -1,4 +1,3 @@
-import { User } from '../db/models.js'
 import {ROLE_TYPES} from "../consts.js";
 import _ from "lodash";
 

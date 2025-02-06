@@ -14,6 +14,9 @@ export const verifyToken = async (req, res, next) => {
         req.user = await User.findOne({
             where: {
                 email: decoded.email
+            },
+            attributes: {
+                exclude: ['password']
             }
         });
         next();

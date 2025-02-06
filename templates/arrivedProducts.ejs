@@ -1,0 +1,16 @@
+<div style='<%= styles.products %>'>
+  <p style='<%= styles.opp_address %>'><%= arrivedProducts.shippingAddress %></p>
+  <% for (let product of arrivedProducts.products) {%>
+    <div style='<%= styles.product %>'>
+        <div style='<%= styles.title %>'>
+            <img src='cid:<%= product.img.cid %>' alt="image" style='<%= styles.img %>'>
+            <span><%= product.model %></span>
+        </div>
+        <div style='<%= styles.body %>'>
+            <span>Ценая товара: <%= product.price %>&#8381;</span>
+            <span>Количество: <%= product.amount %></span>
+            <span>Стоимость: <%= product.cost %>&#8381;</span>
+        </div>
+    </div>
+  <%} %>
+</div>

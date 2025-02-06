@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import {config} from "./config.js";
 
-export const sendEmail = (subject, html, email) => {
+export const sendEmail = (subject, html, email, attachments = []) => {
     const transporter = nodemailer.createTransport({
         host: 'smtp.mail.ru',
         port: 465,
@@ -16,6 +16,7 @@ export const sendEmail = (subject, html, email) => {
         to: email,
         subject,
         html,
+        attachments,
     };
 
     transporter.sendMail(mailOptions, (error, info) => {
